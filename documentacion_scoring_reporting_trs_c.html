@@ -1,0 +1,311 @@
+<!doctype html><html><head><meta charset="utf-8"><title>BASC-3 TRS-C scoring y reporting</title><style>
+@page { size: A4; margin: 18mm 16mm; }
+body { font-family: Arial, Helvetica, sans-serif; color: #1f2933; line-height: 1.45; font-size: 10.5pt; }
+h1 { font-size: 22pt; margin: 0 0 18px; color: #102a43; }
+h2 { font-size: 15pt; margin: 24px 0 10px; color: #243b53; border-bottom: 1px solid #d9e2ec; padding-bottom: 4px; }
+h3 { font-size: 12.5pt; margin: 18px 0 8px; color: #334e68; }
+p { margin: 7px 0; }
+ul, ol { margin: 6px 0 10px 24px; padding-left: 18px; }
+li { margin: 8px 0; }
+li > p:first-child { margin-top: 0; }
+li > p { margin: 5px 0; }
+table { width: 100%; border-collapse: collapse; margin: 10px 0 14px; font-size: 9pt; page-break-inside: auto; }
+th, td { border: 1px solid #bcccdc; padding: 5px 6px; vertical-align: top; }
+th { background: #eef2f7; color: #102a43; font-weight: 700; }
+pre { background: #f5f7fa; border: 1px solid #d9e2ec; border-radius: 4px; padding: 10px; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 8.5pt; page-break-inside: avoid; }
+code { font-family: Consolas, 'Courier New', monospace; }
+p code, li code, td code { background: #f5f7fa; padding: 1px 3px; border-radius: 3px; }
+</style></head><body><h1>BASC-3 TRS-C: scoring y reporting por forma</h1>
+<p>Este documento explica primero la forma TRS-C: entrada, recodificación, escalas principales, escalas compuestas, escalas de contenido, índices de validez, índices clínicos, índices de funcionamiento ejecutivo y reporting. Después recoge las diferencias entre las demás formas del BASC-3 a nivel de escalas principales, escalas compuestas, escalas de contenido, índices e ítems.</p>
+<h2>Alcance de TRS-C</h2>
+<p>TRS-C es la forma para profesores/tutores en edad infantil.</p>
+<p>La entrada esperada son 156 respuestas. Las opciones se codifican como:</p>
+<ul>
+<li>Nunca = 0</li>
+<li>A veces = 1</li>
+<li>Frecuentemente = 2</li>
+<li>Casi siempre = 3</li>
+</ul>
+<p>Los ítems invertidos se transforman con <code>3 - valor</code>. En TRS-C son: <code>1, 21, 64, 55, 98, 144, 20, 22, 32, 139</code>.</p>
+<h2>Flujo de scoring TRS-C</h2>
+<ol>
+<li><p>Seleccionar baremos.</p>
+<p>Para obtener puntuaciones T, percentiles y SEM se consulta <code>BASC3_ES_ESES_NORM</code>. Las columnas relevantes son <code>TEST_ID</code>, <code>SCALE</code>, <code>RAWSCORE</code>, <code>AGE_MIN</code>, <code>AGE_MAX</code>, <code>GENDER_NORM</code> y las columnas de T, PR y SEM del baremo seleccionado. Para diferencias ipsativas, significaciones, comparaciones entre compuestos y frecuencia/tasa base se consulta <code>BASC3DIFF_ES_ESES_NORM</code>; ahí se usan <code>TEST_ID</code>, <code>SCALE</code>, <code>AGE_MIN</code>, <code>AGE_MAX</code>, <code>RAWSCORE_MIN</code>, <code>RAWSCORE_MAX</code>, <code>PERCENTILE</code>, <code>NORMALIZED_SCORE1</code> y <code>NORMALIZED_SCORE2</code>.</p>
+</li>
+<li><p>Determinar el baremo aplicable.</p>
+<p>La selección normativa se realiza combinando edad, sexo y tipo de baremo. El reporte TRS-C utiliza el baremo combinado por sexo para las tablas principales, aunque el scoring puede calcular también el baremo específico cuando está disponible.</p>
+</li>
+<li><p>Validar entrada.</p>
+<p>Debe comprobarse que existe una fila normativa aplicable, que llegan las 156 respuestas esperadas, que la edad está presente y que pertenece al rango de la forma.</p>
+</li>
+<li><p>Recodificar respuestas.</p>
+<p>Se invierten los ítems de la lista TRS-C.</p>
+<pre><code>reversed &lt;- c(1, 21, 64, 55, 98, 144, 20, 22, 32, 139)
+
+reverse &lt;- function(value, index) {
+  if (index &lt; 0) {
+    return(2 - value)
+  }
+  return(3 - value)
+}
+
+Score$items &lt;- Score$items - 1
+for (i in 1:length(Score$items)) {
+  if (i %in% reversed) {
+    Score$items[i] &lt;- reverse(Score$items[i], i)
+  }
+}</code></pre>
+</li>
+<li><p>Calcular puntuación directa de escalas.</p>
+<p>Para cada escala se suman los ítems válidos. Si una escala tiene más de 2 omisiones o valores 99, la escala queda no puntuable. Si tiene 1 o 2 omisiones, se imputa <code>n_omisiones * constante_de_omisión</code> antes de obtener la puntuación directa.</p>
+<pre><code>score_scale &lt;- function(datos_items, omit_constant) {
+  n_nas &lt;- sum(is.na(datos_items) | datos_items == 99)
+
+  if (n_nas &gt; 2) {
+    return(NA)
+  }
+
+  sum(datos_items[datos_items &lt; 99 &amp; !is.na(datos_items)] +
+      (n_nas * omit_constant))
+}</code></pre>
+</li>
+<li><p>Transformar por baremos.</p>
+<p>Cada puntuación directa se busca en <code>BASC3_ES_ESES_NORM</code>. La fila normativa devuelve la puntuación T, el percentil y el SEM de la escala o compuesto para el grupo normativo seleccionado.</p>
+</li>
+<li><p>Calcular compuestos.</p>
+<p>Primero se suman las puntuaciones T de las escalas incluidas en cada compuesto. Después esa suma se transforma en la tabla <code>BASC3_ES_ESES_NORM</code> para obtener T, percentil y SEM del compuesto.</p>
+<pre><code>epi_scales &lt;- c(&quot;hyp&quot;, &quot;agg&quot;, &quot;cop&quot;)
+ipi_scales &lt;- c(&quot;anx&quot;, &quot;dep&quot;, &quot;som&quot;)
+spi_scales &lt;- c(&quot;atp&quot;, &quot;lep&quot;)
+asi_scales &lt;- c(&quot;ada&quot;, &quot;sos&quot;, &quot;lea&quot;, &quot;sus&quot;, &quot;com&quot;)
+BSI_scales &lt;- c(&quot;hyp&quot;, &quot;agg&quot;, &quot;dep&quot;, &quot;atp&quot;, &quot;aty&quot;, &quot;wit&quot;)
+
+BSI &lt;- sum(T_hyp, T_agg, T_dep, T_atp, T_aty, T_wit)
+BSI_mean &lt;- round2(BSI / 6)
+asi_mean &lt;- round2(asi / 5)</code></pre>
+</li>
+<li><p>Calcular diferencias ipsativas.</p>
+<p>Las escalas clínicas/escolares se comparan contra la media T del BSI. Las adaptativas se comparan contra la media T de Habilidades adaptativas. Para obtener la frecuencia/tasa base, se calcula la diferencia y se busca en <code>BASC3DIFF_ES_ESES_NORM</code> la fila en la que esa diferencia cae dentro del rango definido por <code>RAWSCORE_MIN</code> y <code>RAWSCORE_MAX</code>. El <code>PERCENTILE</code> de esa fila es la frecuencia/tasa base, y <code>NORMALIZED_SCORE1</code> se usa como umbral de significación de la diferencia.</p>
+<pre><code>if (escala %in% c(&quot;ad&quot;, &quot;so&quot;, &quot;le&quot;, &quot;sk&quot;, &quot;fc&quot;)) {
+  diff &lt;- T_escala - asi_mean
+} else {
+  diff &lt;- T_escala - BSI_mean
+}
+
+fila_diff &lt;- dplyr::filter(
+  norm_diff,
+  SCALE == escala &amp;
+    abs(diff) &gt; RAWSCORE_MIN &amp;
+    abs(diff) &lt;= RAWSCORE_MAX
+)
+
+sig &lt;- abs(diff) &gt; fila_diff$NORMALIZED_SCORE1
+frecuencia_tasa_base &lt;- fila_diff$PERCENTILE</code></pre>
+</li>
+<li><p>Calcular comparaciones entre compuestos.</p>
+<p>Se comparan Problemas de exteriorización frente a Problemas de interiorización, Problemas de exteriorización frente a Problemas escolares, y Problemas de interiorización frente a Problemas escolares. Para cada comparación se calcula la diferencia y se localiza en <code>BASC3DIFF_ES_ESES_NORM</code> el rango <code>RAWSCORE_MIN</code>-<code>RAWSCORE_MAX</code> en el que cae. El <code>PERCENTILE</code> de esa fila da la frecuencia/tasa base, y <code>NORMALIZED_SCORE2</code> se usa como umbral de significación para comparaciones entre compuestos.</p>
+<pre><code>comp_diff &lt;- setNames(
+  c(epi_T - ipi_T, epi_T - spi_T, ipi_T - spi_T),
+  c(&quot;epiipi&quot;, &quot;epispi&quot;, &quot;ipispi&quot;)
+)
+
+fila_comp &lt;- dplyr::filter(
+  norm_diff,
+  SCALE == name &amp;
+    abs(comp_diff[name]) &gt; RAWSCORE_MIN &amp;
+    abs(comp_diff[name]) &lt;= RAWSCORE_MAX
+)
+
+sig_comp &lt;- abs(comp_diff[name]) &gt; fila_comp$NORMALIZED_SCORE2
+frecuencia_tasa_base_comp &lt;- fila_comp$PERCENTILE</code></pre>
+</li>
+<li><p>Calcular escalas de contenido e índices clínicos.</p>
+<p>Se calculan por suma directa de sus ítems y se transforman con las normas igual que el resto de escalas.</p>
+</li>
+</ol>
+<h2>Escalas TRS-C y mapeo de ítems</h2>
+<table><thead><tr><th>Escala</th><th>ítems</th><th>Constante omisiones</th></tr></thead><tbody>
+<tr><td>Hiperactividad</td><td>4, 11, 30, 33, 40, 93, 103, 110, 126, 137, 154</td><td>1</td></tr>
+<tr><td>Agresividad</td><td>6, 10, 52, 61, 73, 82, 90, 111, 124, 138</td><td>0</td></tr>
+<tr><td>Problemas de conducta</td><td>23, 35, 43, 48, 70, 85, 121, 135, 149</td><td>0</td></tr>
+<tr><td>Ansiedad</td><td>8, 15, 26, 68, 79, 83, 95, 106, 112</td><td>0</td></tr>
+<tr><td>Depresión</td><td>12, 81, 91, 97, 114, 118, 133, 142, 146, 153, 156</td><td>0</td></tr>
+<tr><td>Somatización</td><td>34, 56, 76, 80, 105, 131, 134</td><td>0</td></tr>
+<tr><td>Problemas de atención</td><td>1R, 14, 21R, 53, 64R, 88, 107, 152</td><td>1</td></tr>
+<tr><td>Problemas de aprendizaje</td><td>28, 44, 55R, 72, 117, 120, 130, 147</td><td>1</td></tr>
+<tr><td>Atipicidad</td><td>9, 50, 63, 87, 125, 128, 132, 145, 151</td><td>0</td></tr>
+<tr><td>Retraimiento</td><td>16, 37, 62, 96, 98R, 115, 123, 144R</td><td>0</td></tr>
+<tr><td>Adaptabilidad</td><td>3, 20R, 24, 38, 42, 47, 59, 67, 69</td><td>2</td></tr>
+<tr><td>Habilidades sociales</td><td>5, 19, 31, 45, 104, 113, 116, 127, 141, 150</td><td>2</td></tr>
+<tr><td>Liderazgo</td><td>25, 41, 49, 58, 86, 92, 102</td><td>2</td></tr>
+<tr><td>Habilidades académicas</td><td>7, 77, 94, 122, 129, 143, 148, 155</td><td>2</td></tr>
+<tr><td>Comunicación funcional</td><td>2, 22R, 32R, 39, 60, 71, 74, 89, 119, 139R</td><td>2</td></tr>
+</tbody></table>
+<h2>Compuestos TRS-C</h2>
+<table><thead><tr><th>Compuesto</th><th>Escalas que suma</th></tr></thead><tbody>
+<tr><td>Problemas de exteriorización</td><td>Hiperactividad, Agresividad, Problemas de conducta</td></tr>
+<tr><td>Problemas de interiorización</td><td>Ansiedad, Depresión, Somatización</td></tr>
+<tr><td>Problemas escolares</td><td>Problemas de atención, Problemas de aprendizaje</td></tr>
+<tr><td>Habilidades adaptativas</td><td>Adaptabilidad, Habilidades sociales, Liderazgo, Habilidades académicas, Comunicación funcional</td></tr>
+<tr><td>Índice de síntomas conductuales</td><td>Hiperactividad, Agresividad, Depresión, Problemas de atención, Atipicidad, Retraimiento</td></tr>
+</tbody></table>
+<p>La media T del BSI se calcula como la suma de las T de sus seis escalas dividida por 6. La media T de Habilidades adaptativas se calcula como la suma de sus cinco escalas dividida por 5.</p>
+<h2>Escalas de contenido e índices clínicos TRS-C</h2>
+<table><thead><tr><th>Escala/Índice</th><th>ítems</th></tr></thead><tbody>
+<tr><td>Control de la ira</td><td>6, 61, 65, 75, 93, 111, 142</td></tr>
+<tr><td>Acoso escolar</td><td>35, 36, 48, 57, 61, 90, 109, 121, 124</td></tr>
+<tr><td>Trastornos del desarrollo social</td><td>2, 16, 38, 50, 62, 63, 66, 71, 89, 100, 115, 127, 132, 136, 144</td></tr>
+<tr><td>Autocontrol emocional</td><td>6, 15, 29, 51, 67, 69, 81, 91, 93, 111, 142, 154</td></tr>
+<tr><td>Funcionamiento ejecutivo</td><td>1, 6, 14, 17, 18, 33, 39, 40, 51, 55, 58, 69, 86, 93, 103, 107, 108, 111, 122, 126, 142, 143, 148, 154</td></tr>
+<tr><td>Emocionalidad negativa</td><td>6, 20, 46, 78, 91, 118, 133, 142</td></tr>
+<tr><td>Resiliencia</td><td>3, 17, 38, 39, 41, 42, 47, 49, 67, 84, 92, 101, 140</td></tr>
+<tr><td>Índice de probabilidad de TDAH</td><td>4, 6, 13, 14, 22, 25, 41, 53, 64, 70, 88, 91, 107, 111, 125, 135, 136, 139, 143, 148, 154</td></tr>
+<tr><td>Índice de probabilidad de autismo</td><td>5, 9, 45, 55, 58, 60, 62, 63, 86, 87, 91, 92, 100, 106, 108, 111, 119, 132, 141, 145, 151, 154</td></tr>
+<tr><td>Índice de probabilidad de comportamiento perturbador</td><td>10, 12, 23, 35, 52, 57, 61, 62, 70, 73, 85, 90, 91, 111, 118, 125, 133, 138, 139, 148, 154, 156</td></tr>
+<tr><td>Índice de deterioro funcional</td><td>1, 2, 5, 15, 22, 23, 28, 32, 39, 45, 50, 53, 60, 62, 69, 71, 72, 78, 80, 81, 83, 86, 89, 91, 93, 94, 96, 98, 103, 105, 106, 111, 117, 120, 125, 126, 128, 130, 139, 143, 144, 146, 147, 155</td></tr>
+</tbody></table>
+<h2>índices de validez TRS-C</h2>
+<p>Índice F: cuenta respuestas &quot;Casi siempre&quot; en los ítems <code>8, 12, 20, 26, 35, 37, 50, 57, 61, 73, 78, 80, 82, 97, 109, 123, 128, 132, 149, 156</code>.</p>
+<ul>
+<li>0-1: Aceptable</li>
+<li>2: Cautela</li>
+<li>3 o más: Suma cautela</li>
+</ul>
+<p>Índice de patrón de respuestas: cuenta cuántas veces una respuesta difiere de la respuesta inmediatamente anterior.</p>
+<ul>
+<li>0-45: Precaución-Bajo</li>
+<li>46-123: Aceptable</li>
+<li>124-155: Precaución-Alto</li>
+</ul>
+<p>Índice de consistencia: suma diferencias absolutas entre pares:</p>
+<p><code>(70,23), (131,105), (135,82), (110,40), (9,63), (17,58), (75,111), (147,28), (107,53), (88,14), (102,155), (29,91), (16,96), (85,35), (64R,21R), (150,113), (44,117), (124,90), (116,141), (77,94)</code>.</p>
+<ul>
+<li>0-11: Aceptable</li>
+<li>12-13: Cautela</li>
+<li>14 o más: Suma cautela</li>
+</ul>
+<h2>índices de funcionamiento ejecutivo en el reporte</h2>
+<p>El reporte TRS-C añade cinco índices ejecutivos calculados desde respuestas de ítems, no desde baremos de escalas:</p>
+<table><thead><tr><th>Índice</th><th>ítems</th></tr></thead><tbody>
+<tr><td>Resolución de problemas</td><td>17, 18, 39, 55, 58, 86, 108, 143, 148</td></tr>
+<tr><td>Control atencional</td><td>1, 14, 21, 53, 64, 88, 107, 152</td></tr>
+<tr><td>Control conductual</td><td>30, 33, 40, 93, 103, 126, 154</td></tr>
+<tr><td>Control emocional</td><td>6, 29, 51, 69, 75, 111, 142</td></tr>
+<tr><td>Funcionamiento ejecutivo global</td><td>1, 6, 14, 17, 18, 21, 29, 30, 33, 39, 40, 51, 53, 55, 58, 64, 69, 75, 86, 88, 93, 103, 107, 108, 111, 126, 142, 143, 148, 152, 154</td></tr>
+</tbody></table>
+<p>Rangos:</p>
+<table><thead><tr><th>Índice</th><th>No elevado</th><th>Elevado</th><th>Muy elevado</th></tr></thead><tbody>
+<tr><td>Resolución de problemas</td><td>&lt;=19</td><td>&lt;=24</td><td>&lt;=27</td></tr>
+<tr><td>Control atencional</td><td>&lt;=15</td><td>&lt;=19</td><td>&lt;=24</td></tr>
+<tr><td>Control conductual</td><td>&lt;=9</td><td>&lt;=13</td><td>&lt;=21</td></tr>
+<tr><td>Control emocional</td><td>&lt;=7</td><td>&lt;=12</td><td>&lt;=21</td></tr>
+<tr><td>Funcionamiento ejecutivo global</td><td>&lt;=48</td><td>&lt;=61</td><td>&lt;=93</td></tr>
+</tbody></table>
+<h2>Reporting TRS-C</h2>
+<p>Antes de montar las tablas, se calculan los intervalos de confianza,  la frecuencia/tasa base:</p>
+<pre><code>IC90_MIN &lt;- factors$T - round(qnorm(0.95) * factors$SEM)
+IC90_MAX &lt;- factors$T + round(qnorm(0.95) * factors$SEM)
+
+factors$IC90 &lt;- paste0(IC90_MIN, &quot;-&quot;, IC90_MAX)
+factors$BR &lt;- paste0(&quot;â‰¤&quot;, factors$BR, &quot;%&quot;)
+factors$SIG[factors$SIG == 99 &amp; !is.na(factors$SIG)] &lt;- &quot;NS&quot;</code></pre>
+<p>Las medias del Índice de síntomas conductuales y de Habilidades adaptativas se recalculan para mostrarlas en el informe:</p>
+<pre><code>BSI_factors &lt;- c(&quot;hyp&quot;, &quot;agg&quot;, &quot;dep&quot;, &quot;atp&quot;, &quot;aty&quot;, &quot;wit&quot;)
+BSI &lt;- sum(factors[BSI_factors, &quot;T-GC&quot;])
+BSI_mean &lt;- round(BSI / 6)
+
+asi_scales &lt;- c(&quot;ada&quot;, &quot;sos&quot;, &quot;lea&quot;, &quot;sus&quot;, &quot;com&quot;)
+asi &lt;- sum(factors[asi_scales, &quot;T-GC&quot;])
+asi_mean &lt;- round(asi / 5)</code></pre>
+<ol>
+<li><p>Portada.</p>
+<p>Incluye nombre del instrumento, forma para profesores/tutores, datos identificativos, fecha, informante y logos.</p>
+</li>
+<li><p>Datos del usuario e informante.</p>
+<p>Profesor, tipo de profesor, tiempo que conoce al niño, observaciones sobre visión/audición y comentarios generales. Si no hay observaciones, mostrar que no se han proporcionado.</p>
+</li>
+<li><p>Descripción del BASC-3.</p>
+<p>Descripción general del sistema BASC-3 y de la forma TRS.</p>
+</li>
+<li><p>Resumen de índices de validez.</p>
+<p>Tabla con Índice F, Patrón de respuestas y Consistencia, mostrando clasificación y puntuación directa.</p>
+<pre><code>f_index &lt;- counts
+if (f_index &lt;= 1) {
+  f_range &lt;- &quot;Aceptable&quot;
+} else if (f_index &lt;= 2) {
+  f_range &lt;- &quot;Cautela&quot;
+} else {
+  f_range &lt;- &quot;Suma cautela&quot;
+}
+
+response_pattern_index &lt;- 0
+for (i in 1:(length(Score) - 1)) {
+  response_pattern_index &lt;- response_pattern_index + (Score[i + 1] != Score[i])
+}
+
+if (response_pattern_index &lt;= 45) {
+  response_pattern_range &lt;- &quot;Precaución-Bajo&quot;
+} else if (response_pattern_index &lt;= 123) {
+  response_pattern_range &lt;- &quot;Aceptable&quot;
+} else {
+  response_pattern_range &lt;- &quot;Precaución-Alto&quot;
+}</code></pre>
+</li>
+<li><p>Perfil de puntuaciones T de escalas compuestas, clínicas y adaptativas.</p>
+<p>Gráfico de puntuaciones T. Para TRS-C debe contener compuestos, escalas clínicas/escolares y adaptativas.</p>
+</li>
+<li><p>Tabla de compuestos.</p>
+<p>Para cada compuesto: puntuación directa, T, percentil e intervalo de confianza del 90%. Incluir comparación entre compuestos y las medias T de BSI y Habilidades adaptativas.</p>
+</li>
+<li><p>Tabla de escalas clínicas, escolares y adaptativas.</p>
+<p>Para cada escala: puntuación directa, T, percentil, IC 90%, diferencia ipsativa, nivel de significación y frecuencia.</p>
+</li>
+<li><p>ítems de validez.</p>
+<p>Listar los ítems que contribuyen al Índice F, los elementos del patrón de respuesta y los pares de consistencia relevantes. Si el Índice F es aceptable y no hay contribuciones destacables, mostrar que la puntuación del Índice F es aceptable.</p>
+</li>
+<li><p>Perfil y tablas de escalas de contenido e índices clínicos.</p>
+<p>Incluir escalas de contenido y los índices clínicos con puntuación directa, T, percentil e IC 90%.</p>
+</li>
+<li><p>Resumen de índices de funcionamiento ejecutivo.</p>
+<p>Mostrar funcionamiento ejecutivo global, resolución de problemas, control atencional, control conductual y control emocional, con su clasificación.</p>
+<pre><code> psi &lt;- sum_contenido_clinicos(c(17,18,39,55,58,86,108,143,148))
+ aci &lt;- sum_contenido_clinicos(c(1,14,21,53,64,88,107,152))
+ bci &lt;- sum_contenido_clinicos(c(30,33,40,93,103,126,154))
+ eci &lt;- sum_contenido_clinicos(c(6,29,51,69,75,111,142))
+ efi &lt;- sum_contenido_clinicos(c(
+   1,6,14,17,18,21,29,30,33,39,40,51,53,55,58,64,
+   69,75,86,88,93,103,107,108,111,126,142,143,148,152,154
+ ))
+
+ tabla_indices &lt;- data.frame(
+   `No elevado` = c(19, 15, 9,  7, 48),
+   Elevado = c(24, 19, 13, 12, 61),
+   `Muy elevado` = c(27, 24, 21, 21, 93),
+   row.names = c(&quot;psi&quot;, &quot;aci&quot;, &quot;bci&quot;, &quot;eci&quot;, &quot;efi&quot;),
+   check.names = FALSE
+ )</code></pre>
+</li>
+<li><p>ítems críticos.</p>
+<p>Listar los críticos definidos en la ficha TRS-C y destacar aquellos con respuesta A veces, Frecuentemente o Casi siempre.</p>
+</li>
+<li><p>ítems por escala.</p>
+<p>Separar en escalas clínicas, adaptativas, de contenido, índices clínicos e índices de funcionamiento ejecutivo.</p>
+</li>
+<li><p>Respuestas a los ítems.</p>
+<p>Matriz final de respuestas, usando etiquetas de respuesta en español: Nunca, A veces, Frecuentemente, Casi siempre.</p>
+<pre><code> nsoa_map &lt;- c(
+   &quot;0&quot; = &quot;Nunca&quot;,
+   &quot;1&quot; = &quot;A veces&quot;,
+   &quot;2&quot; = &quot;Frecuentemente&quot;,
+   &quot;3&quot; = &quot;Casi siempre&quot;
+ )
+
+ text_Items &lt;- unname(nsoa_map[as.character(Score)])</code></pre>
+</li>
+</ol>
+<h2>Estado del resto de formas</h2>
+<p>La documentación general del BASC-3 se puede encontrar en Jira en un fichero llamado <code>BASC-3 Tot</code>.</p>
+<p>En Concerto falta subir los ítems en español para todas las formas excepto TRS-C.</p>
+<p>El código disponible para el resto de formas calcula solo escalas principales. Todavía no calcula escalas compuestas, escalas de contenido ni índices clínicos para esas formas.</p>
+<p>También falta implementar el resto de informes. TRS-C es la forma más completa actualmente: incluye escalas principales, escalas compuestas, escalas de contenido, índices clínicos, índices de validez, índices de funcionamiento ejecutivo y salida de respuestas por ítem.</p>
+<p>Nota final: la gestión de escalas inválidas por exceso de omisiones se ha incluido solo para las escalas base. No se ha incluido todavía la gestión de escalas inválidas para escalas compuestas, escalas de contenido, índices clínicos ni índices de funcionamiento ejecutivo.</p></body></html>
